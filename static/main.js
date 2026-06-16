@@ -136,14 +136,14 @@ async function initWorkspaceGrid() {
 
     workspaces.forEach(ws => {
       const wsId = ws.ws_id;
-      const num  = parseInt(wsId.replace('ws_', ''), 10);
+      const displayNum = wsId.replace('ws_', '');
       const cell = document.createElement('div');
       cell.className = 'ws-cell';
       cell.id        = `ws-cell-${wsId}`;
       cell.title     = ws.label || wsId;
       cell.innerHTML = `
         <span class="ws-icon">●</span>
-        <span class="ws-num">${num}</span>
+        <span class="ws-num">${displayNum}</span>
       `;
       grid.appendChild(cell);
       activeWorkspaceIds.push(wsId);
