@@ -7,7 +7,7 @@
   <meta name="description" content="Real-time AI-powered workspace space allocation for co-working spaces. Identify underutilized desk spaces and optimize allocation across startups." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=2" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -15,28 +15,37 @@
 
   <!-- ── Sidebar ─────────────────────────────────────────── -->
   <aside class="sidebar">
-    <div class="sidebar-logo">📡</div>
+    <div class="sidebar-logo-container">
+      <div class="sidebar-logo"></div>
+      <div class="sidebar-title-group">
+        <span class="sidebar-title">OccuSense AI</span>
+        <span class="sidebar-subtitle">Workspace Allocation</span>
+      </div>
+    </div>
 
     <nav class="sidebar-nav">
-      <button id="nav-live" class="nav-icon-btn active"
-              onclick="switchTab('live')" aria-label="Live Feed">
-        🎥
-        <span class="nav-tooltip">Live Feed</span>
+      <div class="nav-section-title">CORE PIPELINE</div>
+      <button id="nav-live" class="nav-item-btn active" onclick="switchTab('live')">
+        <span class="nav-icon"></span>
+        <span class="nav-label">Live Feed</span>
       </button>
-      <button id="nav-analytics" class="nav-icon-btn"
-              onclick="switchTab('analytics')" aria-label="Space Analytics">
-        📊
-        <span class="nav-tooltip">Space Analytics</span>
+
+      <div class="nav-section-title">SPACE MANAGEMENT</div>
+      <button id="nav-analytics" class="nav-item-btn" onclick="switchTab('analytics')">
+        <span class="nav-icon"></span>
+        <span class="nav-label">Space Analytics</span>
       </button>
-      <button id="nav-optimize" class="nav-icon-btn"
-              onclick="switchTab('optimize')" aria-label="Space Optimization">
-        💡
-        <span class="nav-tooltip">Space Optimization</span>
+      <button id="nav-optimize" class="nav-item-btn" onclick="switchTab('optimize')">
+        <span class="nav-icon"></span>
+        <span class="nav-label">Space Optimization</span>
       </button>
     </nav>
 
     <div class="sidebar-bottom">
-      <button class="nav-icon-btn" title="Settings" style="color:#5A6478;">⚙️</button>
+      <button class="nav-item-btn" title="Settings" style="color:var(--text-on-dark);">
+        <span class="nav-icon"></span>
+        <span class="nav-label">Settings</span>
+      </button>
     </div>
   </aside>
 
@@ -55,7 +64,6 @@
           <span id="connection-label">Connecting…</span>
         </div>
         <div class="status-pill">
-          <span>🪑</span>
           <span class="occ-counter" id="header-occupied">— / —</span>
           <span style="color:var(--text-muted);font-size:0.75rem;">occupied</span>
         </div>
@@ -72,7 +80,7 @@
           <!-- Video Feed -->
           <div class="card video-card">
             <div class="card-header">
-              <h2>Live Camera Feed — Floor 2</h2>
+              <h2>Live Camera Feed</h2>
               <span class="badge badge-live" id="mode-badge">
                 <span class="badge-dot"></span>
                 LIVE
@@ -220,7 +228,7 @@
           <label>Spaces needed:</label>
           <input type="number" id="req-spaces-count" value="5" min="1" max="30" />
           <button class="btn btn-primary" onclick="runRecommendation()">
-            🔍 Find Available Spaces
+             Find Available Spaces
           </button>
         </div>
 
@@ -239,10 +247,10 @@
             </div>
             <div class="confirm-actions">
               <button class="btn btn-secondary" onclick="generateLetter()">
-                📄 Generate Assignment Letter
+                Generate Assignment Letter
               </button>
               <button class="btn btn-success" onclick="confirmReassignment()">
-                ✅ Confirm Reassignment
+                Confirm Reassignment
               </button>
             </div>
           </div>
@@ -264,15 +272,15 @@
 <!-- Assignment Letter Modal -->
 <div id="letter-modal" class="modal-backdrop" style="display:none;">
   <div class="modal">
-    <h3>📄 Space Assignment Letter</h3>
+    <h3>Space Assignment Letter</h3>
     <div class="letter-text" id="letter-content"></div>
     <div class="modal-actions">
-      <button class="btn btn-secondary" onclick="copyLetter()">📋 Copy to Clipboard</button>
+      <button class="btn btn-secondary" onclick="copyLetter()">Copy to Clipboard</button>
       <button class="btn btn-primary" onclick="closeLetterModal()">Close</button>
     </div>
   </div>
 </div>
 
-<script src="/static/main.js"></script>
+<script src="/static/main.js?v=2"></script>
 </body>
 </html>

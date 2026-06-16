@@ -25,7 +25,7 @@ let currentRec       = null;   // holds last recommendation result
 // ─── Tab Switching ─────────────────────────────────────────────────────────────
 
 function switchTab(tabName) {
-  document.querySelectorAll('.nav-icon-btn').forEach(btn => btn.classList.remove('active'));
+  document.querySelectorAll('.nav-item-btn').forEach(btn => btn.classList.remove('active'));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
 
   document.getElementById(`nav-${tabName}`)?.classList.add('active');
@@ -207,9 +207,9 @@ function renderPeakHoursChart(peakHours) {
   const labels = peakHours.map(h => h.hour_label || `${h.hour}:00`);
   const values = peakHours.map(h => Math.round(h.avg_occupancy * 100));
   const colors = peakHours.map(h =>
-    h.category === 'peak'     ? 'rgba(220,38,38,0.75)' :
-    h.category === 'off_peak' ? 'rgba(22,163,74,0.65)' :
-                                 'rgba(37,99,235,0.65)'
+    h.category === 'peak'     ? '#0f62fe' :
+    h.category === 'off_peak' ? '#cbd5e1' :
+                                 '#3b82f6'
   );
   destroyChart('chart-peak-hours');
   const ctx = document.getElementById('chart-peak-hours').getContext('2d');
@@ -229,9 +229,9 @@ function renderDowChart(dow) {
     type: 'line',
     data: { labels, datasets: [{
       label: 'Occupancy %', data: values,
-      borderColor: '#FF5C00', backgroundColor: 'rgba(255,92,0,0.08)',
+      borderColor: '#0f62fe', backgroundColor: 'rgba(15, 98, 254, 0.05)',
       fill: true, tension: 0.4,
-      pointBackgroundColor: '#FF5C00', pointRadius: 5,
+      pointBackgroundColor: '#0f62fe', pointRadius: 5,
     }]},
     options: chartOptions('Occupancy %', 100),
   });
@@ -242,9 +242,9 @@ function renderPerWsChart(wsUtils) {
   const labels = top.map(w => (w.label || w.ws_id).replace('Desk Space ', ''));
   const values = top.map(w => Math.round((w.utilization_rate || 0) * 100));
   const colors = values.map(v =>
-    v >= 50 ? 'rgba(22,163,74,0.75)'  :
-    v >= 25 ? 'rgba(217,119,6,0.75)'  :
-              'rgba(220,38,38,0.75)'
+    v >= 50 ? '#0f62fe'  :
+    v >= 25 ? '#60a5fa'  :
+              '#cbd5e1'
   );
   destroyChart('chart-per-ws');
   const ctx = document.getElementById('chart-per-ws').getContext('2d');
@@ -543,22 +543,22 @@ function chartOptions(yLabel = '%', yMax = 100) {
     plugins: {
       legend: { display: false },
       tooltip: {
-        backgroundColor: 'rgba(30,30,30,0.95)',
-        borderColor: 'rgba(255,255,255,0.08)',
+        backgroundColor: 'rgba(15, 23, 42, 0.95)',
+        borderColor: 'rgba(255,255,255,0.1)',
         borderWidth: 1,
-        titleColor: '#F0F0F0',
-        bodyColor: '#8A8A8A',
+        titleColor: '#ffffff',
+        bodyColor: '#cbd5e1',
         padding: 10,
       }
     },
     scales: {
       x: {
-        grid: { color: 'rgba(255,255,255,0.04)' },
-        ticks: { color: '#666', font: { size: 11, family: 'Space Grotesk' } },
+        grid: { color: 'rgba(15, 23, 42, 0.05)' },
+        ticks: { color: '#475569', font: { size: 11, family: 'Space Grotesk' } },
       },
       y: {
-        grid: { color: 'rgba(255,255,255,0.04)' },
-        ticks: { color: '#666', font: { size: 11 }, callback: v => `${v}%` },
+        grid: { color: 'rgba(15, 23, 42, 0.05)' },
+        ticks: { color: '#475569', font: { size: 11 }, callback: v => `${v}%` },
         min: 0, max: yMax,
       }
     }
