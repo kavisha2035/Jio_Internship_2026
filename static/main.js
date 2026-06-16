@@ -554,7 +554,7 @@ function chartOptions(yLabel = '%', yMax = 100) {
     scales: {
       x: {
         grid: { color: 'rgba(15, 23, 42, 0.05)' },
-        ticks: { color: '#475569', font: { size: 11, family: 'Space Grotesk' } },
+        ticks: { color: '#475569', font: { size: 11, family: 'Poppins' } },
       },
       y: {
         grid: { color: 'rgba(15, 23, 42, 0.05)' },
