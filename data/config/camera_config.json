@@ -1,0 +1,16 @@
+{
+  "cameras": [
+    {
+      "id": "cam_floor2",
+      "label": "Floor 2 — Main Zone",
+      "floor": "Floor 2",
+      "grid_rows": 2,
+      "grid_cols": 3,
+      "total_workspaces": 6,
+      "frame_width": 640,
+      "frame_height": 480,
+      "description": "Covers all 6 desk workspaces allocated to Startup Alpha"
+    }
+  ]
+}
+

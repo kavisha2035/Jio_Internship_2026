@@ -1,0 +1,64 @@
+{
+  "workspaces": [
+    {
+      "id": "ws_001",
+      "label": "Desk Space A1",
+      "camera_id": "cam_floor2",
+      "grid_row": 0,
+      "grid_col": 0,
+      "allocated_to": "startup_a",
+      "allocation_start": "2026-01-01",
+      "allocation_end": "2026-12-31"
+    },
+    {
+      "id": "ws_002",
+      "label": "Desk Space A2",
+      "camera_id": "cam_floor2",
+      "grid_row": 0,
+      "grid_col": 1,
+      "allocated_to": "startup_a",
+      "allocation_start": "2026-01-01",
+      "allocation_end": "2026-12-31"
+    },
+    {
+      "id": "ws_003",
+      "label": "Desk Space A3",
+      "camera_id": "cam_floor2",
+      "grid_row": 0,
+      "grid_col": 2,
+      "allocated_to": "startup_a",
+      "allocation_start": "2026-01-01",
+      "allocation_end": "2026-12-31"
+    },
+    {
+      "id": "ws_004",
+      "label": "Desk Space A4",
+      "camera_id": "cam_floor2",
+      "grid_row": 1,
+      "grid_col": 0,
+      "allocated_to": "startup_a",
+      "allocation_start": "2026-01-01",
+      "allocation_end": "2026-12-31"
+    },
+    {
+      "id": "ws_005",
+      "label": "Desk Space A5",
+      "camera_id": "cam_floor2",
+      "grid_row": 1,
+      "grid_col": 1,
+      "allocated_to": "startup_a",
+      "allocation_start": "2026-01-01",
+      "allocation_end": "2026-12-31"
+    },
+    {
+      "id": "ws_006",
+      "label": "Desk Space A6",
+      "camera_id": "cam_floor2",
+      "grid_row": 1,
+      "grid_col": 2,
+      "allocated_to": "startup_a",
+      "allocation_start": "2026-01-01",
+      "allocation_end": "2026-12-31"
+    }
+  ]
+}

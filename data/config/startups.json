@@ -1,0 +1,22 @@
+{
+  "startups": [
+    {
+      "id": "startup_a",
+      "name": "Startup Alpha",
+      "allocated_spaces": 6,
+      "contact_email": "alpha@example.com",
+      "contract_start": "2026-01-01",
+      "contract_end": "2026-12-31",
+      "color": "#4a9eff"
+    },
+    {
+      "id": "startup_b",
+      "name": "Startup Beta",
+      "allocated_spaces": 4,
+      "contact_email": "beta@example.com",
+      "contract_start": "2026-01-01",
+      "contract_end": "2026-12-31",
+      "color": "#a78bfa"
+    }
+  ]
+}
