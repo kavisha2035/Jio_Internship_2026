@@ -35,7 +35,7 @@ from ml.tracker import OccupancyTracker
 from core import database as db
 
 # ─── Performance Config ────────────────────────────────────────────────────────
-PROCESS_EVERY_N_FRAMES  = 6        # ~5fps at 30fps camera (was 15 → smoother)
+PROCESS_EVERY_N_FRAMES  = 3        # ~10fps at 30fps camera (was 6 → faster response)
 PROCESS_WIDTH           = 640      # resize before ML
 LOG_INTERVAL_SECONDS    = 300      # save snapshots to DB every 5 min
 RECONNECT_MAX_RETRIES   = 5
@@ -96,7 +96,7 @@ class VideoProcessor:
 
         self.occ_tracker   = OccupancyTracker(
             seat_ids        = workspace_ids,
-            window_size     = 20,
+            window_size     = 8,
             enter_threshold = 0.70,
             exit_threshold  = 0.30,
         )

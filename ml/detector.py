@@ -29,7 +29,7 @@ MIN_CHAIR_WIDTH  = 20          # Minimum chair bbox width in pixels (on 640px fr
 MIN_CHAIR_HEIGHT = 20          # Minimum chair bbox height in pixels
 PROCESS_WIDTH = 640            # All frames resized to this before detection
 MOCK_MODE = os.environ.get("MOCK_MODE", "false").lower() == "true"
-POSTURE_EVERY_N = 3            # Run MediaPipe posture every Nth processed frame (cache between)
+POSTURE_EVERY_N = 1            # Run MediaPipe posture every processed frame (no caching lag)
 
 
 @dataclass
