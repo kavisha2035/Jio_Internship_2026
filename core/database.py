@@ -102,6 +102,25 @@ def init_db():
             ON occupancy_logs(startup_id, recorded_at);
         CREATE INDEX IF NOT EXISTS idx_sessions_ws
             ON occupancy_sessions(ws_id, session_start);
+
+        -- Chair occupancy count logs
+        CREATE TABLE IF NOT EXISTS chair_occupancy_logs (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            total        INTEGER,
+            occupied     INTEGER,
+            vacant       INTEGER,
+            recorded_at  TEXT NOT NULL
+        );
+
+        -- Chair dwell sessions
+        CREATE TABLE IF NOT EXISTS dwell_sessions (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            chair_index  INTEGER,
+            start_time   TEXT,
+            end_time     TEXT,
+            duration_min INTEGER,
+            recorded_at  TEXT
+        );
     """)
     conn.commit()
 
@@ -232,6 +251,62 @@ def _generate_historical_data(cur, workspaces: list):
         logs
     )
     print(f"[DB] Generated {len(logs)} historical occupancy records.")
+
+    # ── Generate chair count logs (hourly for 7 days) ──────────────────────
+    chair_logs = []
+    dwell_records = []
+    
+    for day_offset in range(7, 0, -1):
+        day = now - timedelta(days=day_offset)
+        for hour in range(8, 20):
+            dt = day.replace(hour=hour, minute=0, second=0, microsecond=0)
+            ts = dt.isoformat()
+            
+            # Base pattern for occupied chairs (peak around 11am and 3pm)
+            if 10 <= hour <= 12 or 14 <= hour <= 16:
+                occupied = random.randint(6, 10)
+            elif 12 < hour < 14:  # lunch dip
+                occupied = random.randint(2, 5)
+            else:
+                occupied = random.randint(1, 4)
+                
+            total = 12
+            # Drop-off on weekends or Friday afternoon
+            if day.weekday() in (5, 6):
+                occupied = random.randint(0, 1)
+            elif day.weekday() == 4 and hour >= 16:
+                occupied = max(0, occupied - 3)
+                
+            chair_logs.append((total, occupied, total - occupied, ts))
+            
+            # Occasionally generate dwell sessions for occupied chairs
+            if occupied > 0 and random.random() < 0.35:
+                num_sessions = random.randint(1, min(occupied, 3))
+                for _ in range(num_sessions):
+                    chair_idx = random.randint(0, 11)
+                    duration = random.choice([20, 30, 45, 60, 90, 120, 180, 240])
+                    start_dt = dt - timedelta(minutes=duration)
+                    dwell_records.append((
+                        chair_idx,
+                        start_dt.isoformat(),
+                        dt.isoformat(),
+                        duration,
+                        dt.isoformat()
+                    ))
+
+    cur.executemany(
+        "INSERT INTO chair_occupancy_logs (total, occupied, vacant, recorded_at) VALUES (?,?,?,?)",
+        chair_logs
+    )
+    print(f"[DB] Seeded {len(chair_logs)} historical chair occupancy count logs.")
+
+    cur.executemany(
+        """INSERT INTO dwell_sessions 
+           (chair_index, start_time, end_time, duration_min, recorded_at)
+           VALUES (?,?,?,?,?)""",
+        dwell_records
+    )
+    print(f"[DB] Seeded {len(dwell_records)} historical chair dwell sessions.")
 
 
 
@@ -502,6 +577,128 @@ def get_all_reassignable_spaces(days: int = 7,
         if ws["utilization_rate"] < util_threshold
         and ws["peak_hour_utilization"] < peak_threshold
     ]
+
+
+def log_chair_counts(counts: dict):
+    conn = get_connection()
+    ts = datetime.now().isoformat()
+    conn.execute(
+        "INSERT INTO chair_occupancy_logs (total, occupied, vacant, recorded_at) VALUES (?,?,?,?)",
+        (counts["total"], counts["occupied"], counts["vacant"], ts)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_chair_history(days: int = 7) -> list[dict]:
+    since = (datetime.now() - timedelta(days=days)).isoformat()
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT CAST(strftime('%H', recorded_at) AS INTEGER) as hour,
+               AVG(occupied) as avg_occupied,
+               AVG(total) as avg_total
+        FROM chair_occupancy_logs
+        WHERE recorded_at >= ?
+        GROUP BY hour
+        ORDER BY hour
+    """, (since,)).fetchall()
+    conn.close()
+    return [{"hour": r["hour"], "avg_occupied": round(r["avg_occupied"] or 0, 1), "avg_total": round(r["avg_total"] or 0, 1)} for r in rows]
+
+
+def get_dwell_stats() -> list[dict]:
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT chair_index,
+               AVG(duration_min) as avg_duration,
+               COUNT(*) as total_sessions
+        FROM dwell_sessions
+        GROUP BY chair_index
+        ORDER BY chair_index
+    """).fetchall()
+    conn.close()
+    return [{"chair_index": r["chair_index"], "avg_duration_min": round(r["avg_duration"] or 0, 1), "total_sessions": r["total_sessions"]} for r in rows]
+
+
+def get_startup_utilization() -> list[dict]:
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT s.startup_id, s.name, s.allocated_spaces,
+               AVG(CAST(o.is_occupied AS REAL)) as avg_occ
+        FROM startups s
+        LEFT JOIN occupancy_logs o ON s.startup_id = o.startup_id
+        GROUP BY s.startup_id
+    """).fetchall()
+    conn.close()
+    
+    result = []
+    for r in rows:
+        allocated = r["allocated_spaces"] or 0
+        avg_occ = r["avg_occ"] or 0.0
+        actual_used = round(avg_occ * allocated, 1)
+        util_pct = round(avg_occ * 100, 1)
+        
+        # Renewal recommendation based on utilization
+        if util_pct >= 70.0:
+            rec = "Renew Contract (High Utilization)"
+        elif util_pct >= 40.0:
+            rec = "Renew with Downsize Option"
+        else:
+            rec = "Reduce Allocated Spaces / Do Not Renew"
+            
+        result.append({
+            "startup_id": r["startup_id"],
+            "name": r["name"],
+            "contracted": allocated,
+            "actual_used": actual_used,
+            "utilization_pct": f"{util_pct}%",
+            "recommendation": rec
+        })
+def add_startup(name: str, allocated: int) -> dict:
+    """Add a new startup, register workspaces, and seed recent occupancy logs."""
+    import time
+    import random
+    from datetime import datetime, timedelta
+    
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    # Generate unique ID
+    startup_id = name.lower().replace(" ", "_")
+    exists = cur.execute("SELECT 1 FROM startups WHERE startup_id = ?", (startup_id,)).fetchone()
+    if exists:
+        startup_id = f"{startup_id}_{int(time.time())}"
+        
+    cur.execute(
+        "INSERT INTO startups (startup_id, name, allocated_spaces) VALUES (?,?,?)",
+        (startup_id, name, allocated)
+    )
+    
+    # Create mock workspaces for this startup
+    for i in range(allocated):
+        ws_id = f"ws_{startup_id}_{i+1}"
+        cur.execute(
+            """INSERT OR IGNORE INTO workspaces 
+               (ws_id, label, camera_id, grid_row, grid_col, allocated_to)
+               VALUES (?,?,'cam_floor2',0,0,?)""",
+            (ws_id, f"Desk Space {name} #{i+1}", startup_id)
+        )
+        
+        # Seed mock occupancy logs over the last 24 hours
+        occ_rate = random.uniform(0.15, 0.85)
+        now = datetime.now()
+        for hour_offset in range(24):
+            log_time = now - timedelta(hours=hour_offset)
+            is_occ = 1 if random.random() < occ_rate else 0
+            cur.execute(
+                """INSERT INTO occupancy_logs (ws_id, startup_id, is_occupied, recorded_at)
+                   VALUES (?,?,?,?)""",
+                (ws_id, startup_id, is_occ, log_time.isoformat())
+            )
+            
+    conn.commit()
+    conn.close()
+    return {"startup_id": startup_id, "name": name, "allocated_spaces": allocated}
 
 
 if __name__ == "__main__":

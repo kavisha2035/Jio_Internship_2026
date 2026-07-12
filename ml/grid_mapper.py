@@ -104,6 +104,7 @@ class WorkspaceGridMapper:
         self.frame_w   = frame_w
         self.frame_h   = frame_h
         self.cells:    list[WorkspaceCell] = []
+        self.perspective_matrix = None
         self._load_and_compute()
 
     # ─── Setup ────────────────────────────────────────────────────────────────
@@ -123,6 +124,29 @@ class WorkspaceGridMapper:
             wss = [w for w in data["workspaces"] if w["camera_id"] == self.camera_id]
         else:
             wss = self._fallback_workspaces(grid_rows, grid_cols)
+
+        # Check for perspective points config
+        perspective_points = None
+        if CAM_CONFIG.exists():
+            try:
+                with open(CAM_CONFIG) as f:
+                    cdata = json.load(f)
+                for cam in cdata.get("cameras", []):
+                    if cam["id"] == self.camera_id:
+                        perspective_points = cam.get("perspective_points")
+                        break
+            except Exception as e:
+                print(f"[GridMapper] Error reading perspective config: {e}")
+
+        if perspective_points is not None and len(perspective_points) == 4:
+            import cv2
+            import numpy as np
+            pts_src = np.float32(perspective_points)
+            pts_dst = np.float32([[0, 0], [self.frame_w, 0], [self.frame_w, self.frame_h], [0, self.frame_h]])
+            self.perspective_matrix = cv2.getPerspectiveTransform(pts_src, pts_dst)
+            print(f"[GridMapper] Loaded perspective transformation matrix for {self.camera_id}")
+        else:
+            self.perspective_matrix = None
 
         for ws in wss:
             row = ws["grid_row"]
@@ -146,6 +170,17 @@ class WorkspaceGridMapper:
         print(f"[GridMapper] Loaded {len(self.cells)} workspace cells "
               f"for {self.camera_id} ({grid_rows}×{grid_cols} grid, "
               f"{self.frame_w}×{self.frame_h} frame)")
+
+    @property
+    def has_perspective(self) -> bool:
+        return self.perspective_matrix is not None
+
+    def warp_perspective(self, frame):
+        """Warp frame to top-down flat grid perspective."""
+        if self.perspective_matrix is not None:
+            import cv2
+            return cv2.warpPerspective(frame, self.perspective_matrix, (self.frame_w, self.frame_h))
+        return frame
 
     def _get_camera_grid(self) -> tuple[int, int]:
         """Read grid dimensions from camera_config.json."""

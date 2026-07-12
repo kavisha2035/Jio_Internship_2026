@@ -24,7 +24,7 @@ from typing import Optional
 import math
 
 CONFIDENCE_THRESHOLD = 0.45
-CHAIR_CONFIDENCE = 0.30        # Lowered — partially occluded chairs score 0.30-0.45
+CHAIR_CONFIDENCE = 0.45        # Raised to 0.45 to optimize chair identification and reduce false positives
 MIN_CHAIR_WIDTH  = 20          # Minimum chair bbox width in pixels (on 640px frame)
 MIN_CHAIR_HEIGHT = 20          # Minimum chair bbox height in pixels
 PROCESS_WIDTH = 640            # All frames resized to this before detection
@@ -70,116 +70,27 @@ class ChairDetection:
 
 class PostureAnalyzer:
     """
-    MediaPipe Pose-based sitting vs standing classifier.
-
-    Sitting logic:
-      When a person is sitting, the hip and knee landmarks are vertically
-      close together (both near the seat level), while the ankles drop lower.
-
-      hip_knee_gap  < 0.18  → hips and knees at similar height = sitting
-      knee_ankle_gap > 0.08 → ankles well below knees = legs hanging = sitting
-
-    We use NORMALIZED y-coordinates (0 = top, 1 = bottom of frame).
-    Normalized coords are robust to camera distance/zoom changes.
-
-    Fallback: if landmarks are not visible (low visibility score), returns "unknown".
+    Simplified and highly robust aspect-ratio based posture classifier.
+    Works independently of camera perspective or distance.
     """
 
     def __init__(self):
-        self._pose = None
-        self._available = False
-        self._init_mediapipe()
-
-    def _init_mediapipe(self):
-        try:
-            import mediapipe as mp
-            self._mp_pose = mp.solutions.pose
-            self._pose = self._mp_pose.Pose(
-                static_image_mode=False,
-                model_complexity=0,       # 0=Lite (fastest), 1=Full, 2=Heavy
-                enable_segmentation=False,
-                min_detection_confidence=0.5,
-                min_tracking_confidence=0.5,
-            )
-            self._available = True
-            print("[Posture] MediaPipe Pose initialized (model_complexity=0 Lite).")
-        except Exception as e:
-            print(f"[Posture] MediaPipe unavailable: {e}. Posture will be 'unknown'.")
-            self._available = False
+        self._available = True
 
     def analyze(self, frame, person: PersonDetection) -> str:
         """
-        Run pose estimation on the cropped person bounding box.
-        Returns "sitting", "standing", or "unknown".
+        Determine posture based on aspect ratio of the person's bounding box.
+        - Narrow aspect ratio (< 0.48) indicates a standing posture.
+        - Wider aspect ratio (>= 0.48) indicates a sitting posture.
         """
-        if not self._available or self._pose is None:
-            return "unknown"
-
-        import mediapipe as mp
-        import cv2
-
-        # Crop with padding so pose model has context
-        h, w = frame.shape[:2]
-        pad = 20
-        x1 = max(0, person.x1 - pad)
-        y1 = max(0, person.y1 - pad)
-        x2 = min(w, person.x2 + pad)
-        y2 = min(h, person.y2 + pad)
-
-        crop = frame[y1:y2, x1:x2]
-        if crop.size == 0:
-            return "unknown"
-
-        # MediaPipe needs RGB
-        rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-
-        try:
-            results = self._pose.process(rgb)
-        except Exception:
-            return "unknown"
-
-        if not results.pose_landmarks:
-            return "unknown"
-
-        lm = results.pose_landmarks.landmark
-        PL = mp.solutions.pose.PoseLandmark
-
-        # Pick the side with better visibility
-        try:
-            l_hip    = lm[PL.LEFT_HIP]
-            l_knee   = lm[PL.LEFT_KNEE]
-            l_ankle  = lm[PL.LEFT_ANKLE]
-            r_hip    = lm[PL.RIGHT_HIP]
-            r_knee   = lm[PL.RIGHT_KNEE]
-            r_ankle  = lm[PL.RIGHT_ANKLE]
-        except (IndexError, AttributeError):
-            return "unknown"
-
-        # Use the side with higher combined visibility
-        left_vis  = l_hip.visibility + l_knee.visibility + l_ankle.visibility
-        right_vis = r_hip.visibility + r_knee.visibility + r_ankle.visibility
-
-        if max(left_vis, right_vis) < 1.2:   # need at least ~0.4 avg visibility
-            return "unknown"
-
-        if left_vis >= right_vis:
-            hip, knee, ankle = l_hip, l_knee, l_ankle
-        else:
-            hip, knee, ankle = r_hip, r_knee, r_ankle
-
-        # Normalized y increases downward (0=top, 1=bottom of crop)
-        hip_y   = hip.y
-        knee_y  = knee.y
-        ankle_y = ankle.y
-
-        hip_knee_gap   = abs(hip_y - knee_y)
-        knee_ankle_gap = abs(knee_y - ankle_y)
-
-        # Sitting: hip and knee are at similar height, ankle is much lower
-        if hip_knee_gap < 0.18 and knee_ankle_gap > 0.08:
-            return "sitting"
-        else:
+        bbox_w = person.x2 - person.x1
+        bbox_h = person.y2 - person.y1
+        aspect_ratio = bbox_w / max(1, bbox_h)
+        
+        if aspect_ratio < 0.48:
             return "standing"
+        else:
+            return "sitting"
 
     @property
     def available(self) -> bool:

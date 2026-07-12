@@ -1,12 +1,5 @@
 /**
- * main.js — OccuSense AI Dashboard (v3 — Workspace Allocation Engine)
- *
- * Handles:
- *  1. WebSocket: receives annotated frames + workspace states
- *  2. Tab 1: live workspace grid (occupied/vacant only, no unknown)
- *  3. Tab 2: analytics — peak hours, DoW, per-workspace utilization table
- *  4. Tab 3: optimization — startup analysis, recommendation cards,
- *             confirm reassignment, generate assignment letter
+ * main.js — OccuSense AI Dashboard (v6 — Proximity Chair Occupancy)
  */
 
 'use strict';
@@ -16,23 +9,26 @@ let ws               = null;
 let wsReconnectTimer = null;
 let wsReconnectDelay = 1500;
 const WS_MAX_DELAY   = 15000;
+let frameCounter     = 0;
+let currentTab       = 'live';
+let heatmapMode      = false;
 
-let charts           = {};
-let analyticsLoaded  = false;
-let allStartups      = [];
-let currentRec       = null;   // holds last recommendation result
-
-// ─── Tab Switching ─────────────────────────────────────────────────────────────
+// ─── Tab Switcher ─────────────────────────────────────────────────────────────
 
 function switchTab(tabName) {
-  document.querySelectorAll('.nav-item-btn').forEach(btn => btn.classList.remove('active'));
-  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-
-  document.getElementById(`nav-${tabName}`)?.classList.add('active');
-  document.getElementById(`panel-${tabName}`)?.classList.add('active');
-
-  if (tabName === 'analytics' && !analyticsLoaded) loadAnalytics();
-  if (tabName === 'optimize')                       loadOptimize();
+  currentTab = tabName;
+  
+  // Update nav buttons
+  document.getElementById('nav-live').classList.toggle('active', tabName === 'live');
+  document.getElementById('nav-analytics').classList.toggle('active', tabName === 'analytics');
+  
+  // Update panels
+  document.getElementById('panel-live').classList.toggle('active', tabName === 'live');
+  document.getElementById('panel-analytics').classList.toggle('active', tabName === 'analytics');
+  
+  if (tabName === 'analytics') {
+    fetchAnalyticsData();
+  }
 }
 window.switchTab = switchTab;
 
@@ -40,7 +36,7 @@ window.switchTab = switchTab;
 
 function connectWebSocket() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const url   = `${proto}://${location.host}/ws/live`;
+  const url   = `${proto}://${location.host}/ws/live?camera_id=cam_floor2`;
   console.log(`[WS] Connecting to ${url}`);
   ws = new WebSocket(url);
 
@@ -82,10 +78,12 @@ function setConnectionStatus(state, label) {
   if (lbl) lbl.textContent = label;
 }
 
-// ─── Frame Handler (Tab 1) ─────────────────────────────────────────────────────
+// ─── Frame & WS Payload Handler ───────────────────────────────────────────────
 
 function handleFrame(msg) {
-  // 1. Show frame
+  frameCounter++;
+
+  // 1. Render annotated video frame
   const img         = document.getElementById('live-canvas');
   const placeholder = document.getElementById('video-placeholder');
   if (msg.data) {
@@ -94,480 +92,276 @@ function handleFrame(msg) {
     placeholder.style.display = 'none';
   }
 
-  // 2. Mode badge
-  const badge = document.getElementById('mode-badge');
-  if (badge) {
-    const isLive = msg.data && !msg.data.includes('mock');
-    badge.className = 'badge ' + (isLive ? 'badge-live' : 'badge-mock');
-    badge.innerHTML = `<span class="badge-dot"></span>${isLive ? 'LIVE' : 'MOCK'}`;
+  // 2. Sidebar Frame Counter
+  setText('frame-count', frameCounter);
+
+  // 3. Extract counts
+  const totalChairs    = msg.chairs ? msg.chairs.total : 0;
+  const occupiedChairs = msg.chairs ? msg.chairs.occupied : 0;
+  const vacantChairs   = msg.chairs ? msg.chairs.vacant : 0;
+  const totalPersons   = msg.total_persons || 0;
+  const dwellTimes     = msg.dwell_times || {};
+
+  // 4. Update Big Count Cards
+  setText('total-chairs',    totalChairs);
+  setText('occupied-chairs', occupiedChairs);
+  setText('vacant-chairs',   vacantChairs);
+
+  // 5. Update Occupancy Percentage Bar
+  const pct = totalChairs > 0 ? Math.round((occupiedChairs / totalChairs) * 100) : 0;
+  setText('occupancy-pct', `${pct}%`);
+  const bar = document.getElementById('occupancy-bar');
+  if (bar) {
+    bar.style.width = `${pct}%`;
+    if (pct >= 80) {
+      bar.style.background = 'linear-gradient(90deg, #ef4444, #dc2626)';
+    } else if (pct >= 50) {
+      bar.style.background = 'linear-gradient(90deg, #f59e0b, #d97706)';
+    } else {
+      bar.style.background = 'linear-gradient(90deg, #22c55e, #16a34a)';
+    }
   }
 
-  // 3. Header counter
-  const stats = msg.stats || {};
-  const hdr   = document.getElementById('header-occupied');
-  if (hdr && stats.total > 0) hdr.textContent = `${stats.occupied} / ${stats.total}`;
-
-  // 4. Summary counts
-  setText('count-occupied', stats.occupied ?? '—');
-  setText('count-vacant',   stats.vacant   ?? '—');
-
-  // 5. Workspace grid — use ONLY what is in the current frame
-  updateWorkspaceGrid(msg.workspaces || {});
-}
-
-// Dynamic workspace grid initialization based on camera_config/workspaces list
-let activeWorkspaceIds = [];
-let gridInitialized = false;
-
-async function initWorkspaceGrid() {
-  const grid = document.getElementById('ws-grid');
-  if (!grid || gridInitialized) return;
-
-  try {
-    const res = await fetch('/api/workspaces');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const workspaces = data.workspaces || [];
-
-    workspaces.sort((a, b) => a.ws_id.localeCompare(b.ws_id));
-
-    grid.innerHTML = '';
-    activeWorkspaceIds = [];
-
-    workspaces.forEach(ws => {
-      const wsId = ws.ws_id;
-      const displayNum = wsId.replace('ws_', '');
-      const cell = document.createElement('div');
-      cell.className = 'ws-cell';
-      cell.id        = `ws-cell-${wsId}`;
-      cell.title     = ws.label || wsId;
-      cell.innerHTML = `
-        <span class="ws-icon">●</span>
-        <span class="ws-num">${displayNum}</span>
-      `;
-      grid.appendChild(cell);
-      activeWorkspaceIds.push(wsId);
-    });
-
-    const maxCol = Math.max(...workspaces.map(w => w.grid_col), 0);
-    const cols = maxCol + 1;
-    grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-
-    gridInitialized = true;
-  } catch (e) {
-    console.error('[GridInit] Failed:', e);
+  // Highlight occupied card if someone is active
+  const occCard = document.querySelector('.occupied-card');
+  if (occCard) {
+    if (occupiedChairs > 0) {
+      occCard.classList.add('has-occupancy');
+    } else {
+      occCard.classList.remove('has-occupancy');
+    }
   }
 }
 
-function updateWorkspaceGrid(workspaces) {
-  const grid = document.getElementById('ws-grid');
-  if (!grid) return;
+// ─── Heatmap Toggle ───────────────────────────────────────────────────────────
 
-  if (!gridInitialized) {
-    initWorkspaceGrid();
+function toggleHeatmap() {
+  heatmapMode = !heatmapMode;
+  const btn = document.getElementById('btn-toggle-heatmap');
+  if (btn) {
+    if (heatmapMode) {
+      btn.textContent = '📹 Show Live Feed';
+      btn.className = 'btn btn-primary';
+    } else {
+      btn.textContent = '🔥 Show Heatmap';
+      btn.className = 'btn btn-secondary';
+    }
+  }
+  
+  // Call API to toggle heatmap on server
+  fetch('/api/heatmap/toggle', { method: 'POST' })
+    .then(res => res.json())
+    .then(data => console.log('[Heatmap] Toggled overlay state:', data))
+    .catch(err => console.error('[Heatmap] Toggle error:', err));
+}
+window.toggleHeatmap = toggleHeatmap;
+
+// ─── Analytics Reports ────────────────────────────────────────────────────────
+
+function fetchAnalyticsData() {
+  // 1. Get historical chair occupancy log averages (Hourly Chart + Circular Ratio)
+  fetch('/api/chairs/history')
+    .then(res => res.json())
+    .then(history => {
+      renderHourlyChart(history);
+      renderCircularChart(history);
+    })
+    .catch(err => console.error('[Analytics] History load error:', err));
+
+  // 2. Get startup space utilization report (Contract vs Reality)
+  fetch('/api/startups/utilization')
+    .then(res => res.json())
+    .then(data => renderUtilizationTable(data))
+    .catch(err => console.error('[Analytics] Utilization load error:', err));
+}
+
+function renderHourlyChart(history) {
+  const container = document.getElementById('hourly-chart-container');
+  if (!container) return;
+  if (!history || history.length === 0) {
+    container.innerHTML = '<div class="chart-placeholder">No historical data logs found.</div>';
     return;
   }
 
-  activeWorkspaceIds.forEach(wsId => {
-    const cell  = document.getElementById(`ws-cell-${wsId}`);
-    if (!cell) return;
-    const state = workspaces[wsId] || 'vacant';
+  const maxVal = Math.max(...history.map(d => d.avg_total), 12);
+  const width = 800;
+  const height = 220;
+  const padding = 40;
+  const chartWidth = width - padding * 2;
+  const chartHeight = height - padding * 2;
+  const barWidth = chartWidth / history.length - 10;
 
-    cell.className  = `ws-cell ${state}`;
-    cell.title      = `${wsId}: ${state}`;
-    const icon = cell.querySelector('.ws-icon');
-    if (icon) icon.textContent = state === 'occupied' ? '●' : '○';
-  });
-}
-
-
-// ─── Analytics (Tab 2) ────────────────────────────────────────────────────────
-
-async function loadAnalytics() {
-  try {
-    const res  = await fetch('/api/analytics?days=7');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    analyticsLoaded = true;
-    renderAnalytics(data);
-  } catch (e) {
-    console.error('[Analytics] Failed:', e);
-  }
-}
-
-function renderAnalytics(data) {
-  renderPeakHoursChart(data.peak_hours || []);
-  renderDowChart(data.day_of_week || []);
-  renderEfficiencyList(data.startup_efficiency || []);
-  renderPerWsChart(data.workspace_utilization || []);
-  renderWsTable(data.workspace_utilization || []);
-}
-
-function renderPeakHoursChart(peakHours) {
-  const labels = peakHours.map(h => h.hour_label || `${h.hour}:00`);
-  const values = peakHours.map(h => Math.round(h.avg_occupancy * 100));
-  const colors = peakHours.map(h =>
-    h.category === 'peak'     ? '#0f62fe' :
-    h.category === 'off_peak' ? '#cbd5e1' :
-                                 '#3b82f6'
-  );
-  destroyChart('chart-peak-hours');
-  const ctx = document.getElementById('chart-peak-hours').getContext('2d');
-  charts['chart-peak-hours'] = new Chart(ctx, {
-    type: 'bar',
-    data: { labels, datasets: [{ label: 'Occupancy %', data: values, backgroundColor: colors, borderRadius: 6, borderSkipped: false }] },
-    options: chartOptions('Occupancy %', 100),
-  });
-}
-
-function renderDowChart(dow) {
-  const labels = dow.map(d => d.day.slice(0, 3));
-  const values = dow.map(d => Math.round(d.avg_occupancy * 100));
-  destroyChart('chart-dow');
-  const ctx = document.getElementById('chart-dow').getContext('2d');
-  charts['chart-dow'] = new Chart(ctx, {
-    type: 'line',
-    data: { labels, datasets: [{
-      label: 'Occupancy %', data: values,
-      borderColor: '#0f62fe', backgroundColor: 'rgba(15, 98, 254, 0.05)',
-      fill: true, tension: 0.4,
-      pointBackgroundColor: '#0f62fe', pointRadius: 5,
-    }]},
-    options: chartOptions('Occupancy %', 100),
-  });
-}
-
-function renderPerWsChart(wsUtils) {
-  const top    = [...wsUtils].slice(0, 15);
-  const labels = top.map(w => (w.label || w.ws_id).replace('Desk Space ', ''));
-  const values = top.map(w => Math.round((w.utilization_rate || 0) * 100));
-  const colors = values.map(v =>
-    v >= 50 ? '#0f62fe'  :
-    v >= 25 ? '#60a5fa'  :
-              '#cbd5e1'
-  );
-  destroyChart('chart-per-ws');
-  const ctx = document.getElementById('chart-per-ws').getContext('2d');
-  charts['chart-per-ws'] = new Chart(ctx, {
-    type: 'bar',
-    data: { labels, datasets: [{ label: 'Utilization %', data: values, backgroundColor: colors, borderRadius: 5, borderSkipped: false }]},
-    options: { ...chartOptions('Utilization %', 100), indexAxis: 'y' },
-  });
-}
-
-function renderEfficiencyList(efficiency) {
-  const el = document.getElementById('efficiency-list');
-  if (!el) return;
-  if (!efficiency.length) { el.innerHTML = '<div style="color:var(--text-muted);">No data</div>'; return; }
-
-  el.innerHTML = efficiency.map(e => {
-    const pct = Math.round((e.score || 0) * 100);
-    const cls = pct >= 50 ? 'good' : pct >= 25 ? 'ok' : 'poor';
-    return `
-      <div>
-        <div class="efficiency-item-header">
-          <span class="startup-name">${e.startup}</span>
-          <span class="score">${e.avg_used} / ${e.allocated} spaces · ${pct}%</span>
-        </div>
-        <div class="progress-bar">
-          <div class="progress-fill ${cls}" style="width:${pct}%"></div>
-        </div>
-      </div>
+  let bars = '';
+  let labels = '';
+  
+  history.forEach((d, i) => {
+    const x = padding + i * (chartWidth / history.length) + 5;
+    // Total bar height (grey background bar)
+    const totalHeight = (d.avg_total / maxVal) * chartHeight;
+    const totalY = height - padding - totalHeight;
+    
+    // Occupied bar height (blue/purple foreground bar)
+    const occHeight = (d.avg_occupied / maxVal) * chartHeight;
+    const occY = height - padding - occHeight;
+    
+    bars += `
+      <!-- Total Bar -->
+      <rect x="${x}" y="${totalY}" width="${barWidth}" height="${totalHeight}" fill="rgba(0,0,0,0.04)" rx="4" />
+      <!-- Occupied Bar -->
+      <rect x="${x}" y="${occY}" width="${barWidth}" height="${occHeight}" fill="url(#barGradient)" rx="4" />
+      <!-- Tooltip trigger -->
+      <rect x="${x}" y="${totalY}" width="${barWidth}" height="${totalHeight}" fill="transparent" style="cursor:pointer;">
+        <title>${d.hour}:00\nAverage Occupied: ${d.avg_occupied}/${d.avg_total}</title>
+      </rect>
     `;
-  }).join('');
+    
+    // Hour label
+    labels += `<text x="${x + barWidth/2}" y="${height - 15}" fill="#64748b" font-size="11" text-anchor="middle">${d.hour}:00</text>`;
+  });
+
+  container.innerHTML = `
+    <svg width="100%" height="100%" viewBox="0 0 ${width} ${height}">
+      <defs>
+        <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#0052cc" />
+          <stop offset="100%" stop-color="#00a2fe" />
+        </linearGradient>
+      </defs>
+      <!-- Grid Lines -->
+      <line x1="${padding}" y1="${padding}" x2="${width - padding}" y2="${padding}" stroke="rgba(0,0,0,0.03)" stroke-dasharray="4" />
+      <line x1="${padding}" y1="${padding + chartHeight/2}" x2="${width - padding}" y2="${padding + chartHeight/2}" stroke="rgba(0,0,0,0.03)" stroke-dasharray="4" />
+      <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="#cbd5e1" />
+      
+      <!-- Bars -->
+      ${bars}
+      <!-- Labels -->
+      ${labels}
+      <!-- Y-Axis max label -->
+      <text x="${padding - 10}" y="${padding + 5}" fill="#64748b" font-size="10" text-anchor="end">${Math.round(maxVal)}</text>
+      <text x="${padding - 10}" y="${padding + chartHeight/2 + 5}" fill="#64748b" font-size="10" text-anchor="end">${Math.round(maxVal/2)}</text>
+      <text x="${padding - 10}" y="${height - padding + 5}" fill="#64748b" font-size="10" text-anchor="end">0</text>
+    </svg>
+  `;
 }
 
-function renderWsTable(wsUtils) {
-  const tbody = document.getElementById('ws-table-body');
+function renderUtilizationTable(data) {
+  const tbody = document.getElementById('utilization-table-body');
   if (!tbody) return;
-  if (!wsUtils.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="color:var(--text-muted);padding:24px;text-align:center;">No data</td></tr>';
+  if (!data || data.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" class="table-empty">No startup space utilization records found.</td></tr>`;
     return;
   }
 
-  const maxHrs = Math.max(...wsUtils.map(w => w.avg_daily_hours || 0), 1);
+  let html = '';
+  data.forEach(s => {
+    let recClass = '';
+    if (s.recommendation.includes('High')) {
+      recClass = 'rec-high';
+    } else if (s.recommendation.includes('Downsize')) {
+      recClass = 'rec-medium';
+    } else {
+      recClass = 'rec-low';
+    }
 
-  tbody.innerHTML = wsUtils.map(ws => {
-    const hrs    = ws.avg_daily_hours || 0;
-    const pct    = Math.round((ws.utilization_rate || 0) * 100);
-    const barPct = Math.min(100, (hrs / 8) * 100);
-    const cls    = pct >= 50 ? 'good' : pct >= 25 ? 'ok' : 'poor';
-
-    const statusMap = {
-      'active':       '<span class="status-badge active">✅ Active</span>',
-      'underused':    '<span class="status-badge underused">⚠️ Underused</span>',
-      'reassignable': '<span class="status-badge reassignable">🔴 Reassignable</span>',
-    };
-
-    return `
+    html += `
       <tr>
-        <td style="font-weight:600;">${ws.label || ws.ws_id}</td>
-        <td style="color:var(--text-secondary);">${ws.startup_name || ws.startup}</td>
-        <td>
-          <div class="hours-bar">
-            <div class="bar-track">
-              <div class="bar-fill ${cls}" style="width:${barPct}%"></div>
-            </div>
-            <span class="bar-label">${hrs.toFixed(1)}h</span>
-          </div>
-        </td>
-        <td style="font-family:'JetBrains Mono',monospace;font-weight:600;">
-          ${ws.utilization_pct || pct + '%'}
-        </td>
-        <td style="color:var(--text-secondary);">
-          ${ws.consecutive_vacant_days > 0 ? `${ws.consecutive_vacant_days}d` : '—'}
-        </td>
-        <td>${statusMap[ws.status] || ws.status}</td>
+        <td><strong>${s.name}</strong></td>
+        <td>${s.contracted} desks</td>
+        <td>${s.actual_used} desks</td>
+        <td><span class="util-badge">${s.utilization_pct}</span></td>
+        <td><span class="rec-badge ${recClass}">${s.recommendation}</span></td>
       </tr>
     `;
-  }).join('');
+  });
+  tbody.innerHTML = html;
 }
 
-// ─── Space Optimization (Tab 3) ────────────────────────────────────────────────
-
-async function loadOptimize() {
-  // Load startups for the selector
-  if (!allStartups.length) {
-    try {
-      const res = await fetch('/api/workspaces');
-      const d   = await res.json();
-      allStartups = d.startups || [];
-      populateStartupSelect(allStartups);
-      renderStartupSummary(allStartups, d.workspaces || []);
-    } catch(e) { console.error('[Optimize] Failed to load startups:', e); }
+function renderCircularChart(history) {
+  if (!history || history.length === 0) return;
+  
+  let totalSum = 0;
+  let occSum = 0;
+  history.forEach(d => {
+    totalSum += d.avg_total;
+    occSum += d.avg_occupied;
+  });
+  
+  const avgRate = totalSum > 0 ? Math.round((occSum / totalSum) * 100) : 0;
+  
+  const circleProgress = document.getElementById('ratio-circle-progress');
+  const circleText = document.getElementById('ratio-circle-text');
+  const circleStats = document.getElementById('ratio-circle-stats');
+  
+  if (circleProgress) {
+    // Circumference is 100
+    circleProgress.setAttribute('stroke-dasharray', `${avgRate}, 100`);
   }
-  // Load startup summary cards via recommendations report
-  try {
-    const res = await fetch('/api/recommendations?days=7');
-    const d   = await res.json();
-    renderStartupReportCards(d.startup_reports || []);
-  } catch(e) {}
+  if (circleText) {
+    circleText.textContent = `${avgRate}%`;
+  }
+  if (circleStats) {
+    circleStats.innerHTML = `<strong>${avgRate}%</strong> Average Occupancy Rate<br><span style="font-size:0.75rem; color:var(--text-muted); font-weight:400; margin-top:2px; display:inline-block;">Based on past 7 days of logs</span>`;
+  }
 }
 
-function populateStartupSelect(startups) {
-  const sel = document.getElementById('req-startup-select');
-  if (!sel) return;
-  sel.innerHTML = '<option value="">Select startup…</option>' +
-    startups.map(s => `<option value="${s.startup_id}">${s.name}</option>`).join('');
+// ─── Add Startup Modal Handlers ───────────────────────────────────────────────
+
+function showAddStartupModal() {
+  const modal = document.getElementById('add-startup-modal');
+  if (modal) {
+    document.getElementById('startup-name').value = '';
+    document.getElementById('startup-chairs').value = '';
+    modal.style.display = 'flex';
+  }
 }
+window.showAddStartupModal = showAddStartupModal;
 
-function renderStartupReportCards(reports) {
-  const row = document.getElementById('startup-summary-row');
-  if (!row || !reports.length) return;
-
-  row.innerHTML = reports.map(r => {
-    const s   = r.summary || {};
-    const tag = s.reassignable_count > 0
-      ? `<span class="ss-tag reassignable">${s.reassignable_count} spaces can be reassigned</span>`
-      : `<span class="ss-tag efficient">Fully utilized</span>`;
-    return `
-      <div class="startup-summary-card">
-        <div class="ss-name">${r.startup_name || r.startup}</div>
-        <div class="ss-stat">${s.effective_usage || '—'}</div>
-        <div class="ss-sub">spaces effectively used (7-day avg)</div>
-        ${tag}
-      </div>
-    `;
-  }).join('');
+function closeAddStartupModal() {
+  const modal = document.getElementById('add-startup-modal');
+  if (modal) {
+    modal.style.display = 'none';
+  }
 }
+window.closeAddStartupModal = closeAddStartupModal;
 
-async function runRecommendation() {
-  const startupId    = document.getElementById('req-startup-select')?.value;
-  const spacesNeeded = parseInt(document.getElementById('req-spaces-count')?.value) || 5;
+function submitAddStartup() {
+  const nameInput = document.getElementById('startup-name');
+  const chairsInput = document.getElementById('startup-chairs');
+  if (!nameInput || !chairsInput) return;
 
-  if (!startupId) {
-    alert('Please select a requesting startup first.');
+  const name = nameInput.value.trim();
+  const chairs = parseInt(chairsInput.value);
+
+  if (!name) {
+    alert("Please enter a startup name.");
+    return;
+  }
+  if (isNaN(chairs) || chairs <= 0) {
+    alert("Please enter a valid number of contracted chairs.");
     return;
   }
 
-  const emptyState = document.getElementById('opt-empty-state');
-  const results    = document.getElementById('rec-results');
-  if (emptyState) emptyState.style.display = 'none';
-  if (results)    results.style.display    = 'none';
-
-  try {
-    const res = await fetch(`/api/recommend-for/${startupId}?spaces_needed=${spacesNeeded}&days=7`);
-    const d   = await res.json();
-    currentRec = d;
-    renderRecommendations(d);
-    if (results) results.style.display = 'block';
-  } catch(e) {
-    console.error('[Rec] Failed:', e);
-    alert('Failed to load recommendations. Make sure the server is running.');
-  }
+  fetch('/api/startups', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name, contracted: chairs })
+  })
+  .then(res => {
+    if (!res.ok) throw new Error("Failed to register startup");
+    return res.json();
+  })
+  .then(data => {
+    console.log("[AddStartup] Registered:", data);
+    closeAddStartupModal();
+    // Refresh table immediately
+    fetchAnalyticsData();
+  })
+  .catch(err => {
+    console.error("[AddStartup] Error:", err);
+    alert("Error registering startup: " + err.message);
+  });
 }
-window.runRecommendation = runRecommendation;
-
-function renderRecommendations(rec) {
-  const banner    = document.getElementById('rec-match-banner');
-  const grid      = document.getElementById('rec-grid');
-  const confirmBar = document.getElementById('confirm-bar');
-  const confirmSummary = document.getElementById('confirm-summary');
-
-  // Match banner
-  const matchColors = { exact: '#16A34A', partial: '#D97706', none: '#DC2626' };
-  const matchIcons  = { exact: '✅', partial: '⚠️', none: '❌' };
-  const matchLabels = {
-    exact:   `Exact match found — ${rec.spaces_found} space(s) available`,
-    partial: `Partial match — found ${rec.spaces_found} of ${rec.spaces_needed} requested`,
-    none:    'No available spaces found — all spaces are actively utilized',
-  };
-
-  if (banner) {
-    banner.innerHTML = `
-      <div style="
-        display:flex;align-items:center;gap:10px;
-        padding:14px 18px;border-radius:14px;
-        background:${matchColors[rec.match_status]}18;
-        border:1px solid ${matchColors[rec.match_status]}40;
-        font-size:0.88rem;font-weight:500;
-      ">
-        <span style="font-size:1.2rem;">${matchIcons[rec.match_status]}</span>
-        <span>${matchLabels[rec.match_status]}</span>
-      </div>`;
-  }
-
-  // Recommendation cards
-  if (grid) {
-    if (!rec.recommendation?.length) {
-      grid.innerHTML = '';
-    } else {
-      grid.innerHTML = rec.recommendation.map(ws => `
-        <div class="rec-card">
-          <div class="rec-card-top">
-            <div>
-              <div class="rec-label">${ws.label}</div>
-              <div class="rec-owner">Currently: ${ws.current_owner_name || ws.current_owner}</div>
-            </div>
-            <span class="rec-util-badge">${ws.utilization_pct}</span>
-          </div>
-          <p class="rec-reason">${ws.reason}</p>
-          <div class="rec-stats">
-            <div class="rec-stat">
-              <div class="rs-val">${ws.avg_daily_hours}h</div>
-              <div class="rs-lbl">Daily avg</div>
-            </div>
-            <div class="rec-stat">
-              <div class="rs-val">${ws.consecutive_vacant > 0 ? ws.consecutive_vacant + 'd' : '—'}</div>
-              <div class="rs-lbl">Vacant streak</div>
-            </div>
-          </div>
-        </div>
-      `).join('');
-    }
-  }
-
-  // Confirm bar
-  if (confirmBar && rec.recommendation?.length) {
-    const reqName = allStartups.find(s => s.startup_id === rec.requesting_startup)?.name || rec.requesting_startup;
-    if (confirmSummary) {
-      confirmSummary.innerHTML =
-        `Reassign <strong>${rec.spaces_found}</strong> space(s) to <strong>${reqName}</strong>`;
-    }
-    confirmBar.style.display = 'flex';
-  } else if (confirmBar) {
-    confirmBar.style.display = 'none';
-  }
-}
-
-async function generateLetter() {
-  if (!currentRec) return;
-  const startupId = currentRec.requesting_startup;
-  const spacesNeeded = currentRec.spaces_needed;
-  try {
-    const res = await fetch(`/api/assignment-letter?requesting_startup=${startupId}&spaces_needed=${spacesNeeded}&days=7`);
-    const d   = await res.json();
-    showLetterModal(d.letter || 'Could not generate letter.');
-  } catch(e) {
-    alert('Failed to generate letter.');
-  }
-}
-window.generateLetter = generateLetter;
-
-async function confirmReassignment() {
-  if (!currentRec || !currentRec.recommendation?.length) return;
-  const wsIds      = currentRec.recommendation.map(w => w.ws_id);
-  const newStartup = currentRec.requesting_startup;
-  const reqName    = allStartups.find(s => s.startup_id === newStartup)?.name || newStartup;
-
-  if (!confirm(`Confirm reassignment of ${wsIds.length} workspace(s) to ${reqName}? This will update the database.`)) return;
-
-  try {
-    const res = await fetch('/api/reassign', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ws_ids: wsIds, new_startup_id: newStartup }),
-    });
-    const d = await res.json();
-    if (d.status === 'confirmed') {
-      alert(`✅ Successfully reassigned ${d.reassigned_count} workspace(s) to ${reqName}!`);
-      currentRec = null;
-      document.getElementById('rec-results').style.display = 'none';
-      document.getElementById('opt-empty-state').style.display = 'block';
-      // Reload optimize tab
-      document.querySelector('[onclick="switchTab(\'optimize\')"]')?.click();
-    }
-  } catch(e) {
-    alert('Reassignment failed. Please try again.');
-  }
-}
-window.confirmReassignment = confirmReassignment;
-
-function showLetterModal(letterText) {
-  const modal   = document.getElementById('letter-modal');
-  const content = document.getElementById('letter-content');
-  if (content) content.textContent = letterText;
-  if (modal)   modal.style.display = 'flex';
-}
-
-function closeLetterModal() {
-  const modal = document.getElementById('letter-modal');
-  if (modal) modal.style.display = 'none';
-}
-window.closeLetterModal = closeLetterModal;
-
-function copyLetter() {
-  const content = document.getElementById('letter-content')?.textContent || '';
-  navigator.clipboard.writeText(content)
-    .then(() => alert('Letter copied to clipboard!'))
-    .catch(() => {});
-}
-window.copyLetter = copyLetter;
-
-// ─── Chart Helpers ─────────────────────────────────────────────────────────────
-
-function chartOptions(yLabel = '%', yMax = 100) {
-  return {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        backgroundColor: 'rgba(15, 23, 42, 0.95)',
-        borderColor: 'rgba(255,255,255,0.1)',
-        borderWidth: 1,
-        titleColor: '#ffffff',
-        bodyColor: '#cbd5e1',
-        padding: 10,
-      }
-    },
-    scales: {
-      x: {
-        grid: { color: 'rgba(15, 23, 42, 0.05)' },
-        ticks: { color: '#475569', font: { size: 11, family: 'Poppins' } },
-      },
-      y: {
-        grid: { color: 'rgba(15, 23, 42, 0.05)' },
-        ticks: { color: '#475569', font: { size: 11 }, callback: v => `${v}%` },
-        min: 0, max: yMax,
-      }
-    }
-  };
-}
-
-function destroyChart(id) {
-  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
-}
+window.submitAddStartup = submitAddStartup;
 
 // ─── Utilities ─────────────────────────────────────────────────────────────────
 
@@ -579,6 +373,5 @@ function setText(id, val) {
 // ─── Init ──────────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
-  initWorkspaceGrid();
   connectWebSocket();
 });

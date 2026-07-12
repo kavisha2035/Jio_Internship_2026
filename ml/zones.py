@@ -37,6 +37,16 @@ CHAIR_IOU_THRESHOLD = 0.40
 
 
 
+def boxes_overlap(p, c, pad=25) -> bool:
+    """Check if person bbox p and chair bbox c overlap in 2D space with a lenient padding."""
+    px1, py1, px2, py2 = p.x1 - pad, p.y1 - pad, p.x2 + pad, p.y2 + pad
+    cx1, cy1, cx2, cy2 = c.x1 - pad, c.y1 - pad, c.x2 + pad, c.y2 + pad
+    
+    overlap_x = max(0, min(px2, cx2) - max(px1, cx1))
+    overlap_y = max(0, min(py2, cy2) - max(py1, cy1))
+    return (overlap_x > 0) and (overlap_y > 0)
+
+
 def match_persons_to_chairs(
     persons: list,    # list[PersonDetection] from detector.py
     chairs:  list,    # list[ChairDetection] from detector.py
@@ -87,7 +97,7 @@ def match_persons_to_chairs(
             cx, cy = chair.center
             dist = math.hypot(px - cx, py - cy)
 
-            if dist <= MAX_CHAIR_DIST:
+            if dist <= MAX_CHAIR_DIST and boxes_overlap(person, chair):
                 person_chair_pairs.append((dist, pi, ci))
 
     # Sort by distance (closest matches first)

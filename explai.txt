@@ -1,0 +1,36 @@
+Here is the complete, detailed breakdown of the features implemented in OccuSense AI:
+
+1. Real-Time Computer Vision Engine
+YOLOv8 Detection: Leverages a highly optimized YOLOv8 nano model (yolov8n.pt) to detect people and chairs. Frames are resized to a standard width of 640px and processed every 2nd frame (PROCESS_EVERY_N_FRAMES = 2) to maximize performance.
+Lightweight Posture Classifier: Employs an aspect-ratio heuristic to differentiate between standing and sitting individuals. This runs in $O(1)$ time with zero CPU overhead, replacing heavy, resource-intensive models like MediaPipe Pose.
+Dynamic Proximity Matching: Matches sitting individuals to their closest chair using a perspective-scaled distance: $$\text{Allowed Distance} = \max(45\text{px},, \text{chair_width} \times 1.25)$$ This tightens matching constraints in the background (preventing distant pedestrians from occupying foreground chairs) and relaxes them in the foreground.
+Perspective Y-Coordinate Gate: Utilizes 2D image coordinates to identify walking pedestrians. If a person's feet (person.y2) are lower in the frame than the chair's base (chair.y2) by more than 35% of the chair's height, they are classified as walking in the foreground aisle and ignored.
+Virtual Chair Synthesis: If a sitting person is detected but their chair is 100% blocked from YOLO's view by their body, the pipeline synthesizes a virtual chair box underneath them. This guarantees the occupant is always associated with a seat.
+2. State Stabilization & Hysteresis Filters
+Asymmetric Hysteresis State Smoothing: Handles temporary frame drops and posture misclassifications:
+Vacant $\rightarrow$ Occupied (Fast transition): Requires 3 consecutive frames (~0.5 seconds) of detected occupancy to activate.
+Occupied $\rightarrow$ Vacant (Slow transition): Requires 15 consecutive frames (~2.5 seconds) of consistent vacancy to release, absorbing momentary walks away or shifts in posture.
+Total Chair Count Smoother: Uses a rolling queue max filter over the last 30 frames to stabilize the total seat count on the dashboard, preventing the count from dropping when chairs are temporarily blocked by passersby.
+3. Occupancy Dwell Tracker
+Session Monitoring: Tracks continuous seating durations for every individual chair.
+Database Logging: Once an occupant leaves a chair, the seat's dwell session (chair ID, start time, end time, duration in minutes) is logged to the SQLite database.
+Dwell Time Display: Active seating durations (e.g. OCCUPIED 2h 15m) are displayed live on both the video feed labels and the scrollable cards on the dashboard.
+4. Interactive Occupancy Heatmap
+Decaying Coordinate Grid: Accumulates coordinate coordinates of sitting persons onto a dedicated matrix that slowly decays at a rate of 0.97 per frame.
+OpenCV Heatmap Visualization: Standardizes and applies a color map (COLORMAP_JET) over the video stream, togglable directly from the dashboard header.
+5. Analytics & SQL Database Core
+Startup Space Allocation: Maintains tables mapping desk spaces to contract agreements for registered startups (e.g. Startup Alpha, Startup Beta).
+Startup Space Utilization Report: Generates space optimization statistics by comparing contracted desks against actual hourly desk usage logs.
+Automated Renewal Recommendations: Recommends action plans during lease renewals:
+High utilization: Recommend contract renewal or space expansion.
+Medium utilization: Recommend renewal with a downsize option.
+Zero/Low utilization: Recommend reducing allocated spaces or non-renewal.
+Peak Occupancy Analysis: Calculates hourly occupancy rates throughout the day.
+6. Premium Glassmorphic Web Dashboard
+WebSocket Live Stream: Delivers real-time annotated frame streams, counts, and active dwell durations over WebSockets.
+Live Feed Tab: Displays a glowing status header (Connected pill), big metric counter cards, the main video feed with a togglable heatmap switch, and a scrollable checklist of detected chairs showing active status indicators.
+Reports & Charts Tab:
+Peak Occupancy SVG Bar Chart: A high-performance chart that plots average occupancy rates hourly without external heavy graphing packages.
+Utilization Table: Displays contract counts, actual desk usage, utilization percentages, and color-coded recommendation badges.
+Dwell Duration Report: Shows average occupancy session durations per chair.
+11:04 PM
